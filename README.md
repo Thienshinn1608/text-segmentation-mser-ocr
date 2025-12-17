@@ -1,0 +1,1 @@
+Tách văn bản khỏi nền phức tạp (Text Segmentation) Mục tiêu: Tách vùng văn bản trên ảnh poster, biển quảng cáo hoặc tài liệu bị nhiễu. Yêu cầu: nhận vùng text, nhị phân hóa rõ ràng, OCR thử nghiệm. Kỹ thuật: MSER, morphology, edge detection, adaptive threshold. Dữ liệu: ICDAR dataset hoặc tự thu thập.

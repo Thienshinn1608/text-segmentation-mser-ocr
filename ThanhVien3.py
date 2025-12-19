@@ -108,16 +108,13 @@ def process_image(img_path):
     img0 = cv2.imread(img_path)
     if img0 is None: return
 
-    # --- Bước 1: Tiền xử lý (TV1) ---
     img, _ = tv1.resize_keep_ratio(img0, tv1.MAX_IMG_W)
     gray = tv1.preprocess_gray(img)
     mask = tv1.build_text_mask(gray)
     
-    # --- Bước 2: Phát hiện vùng (TV2) ---
     boxes = tv2.detect_boxes(gray, mask)
     lines = tv2.group_boxes_by_line(boxes)
 
-    # --- Bước 3: OCR và Đánh giá (TV3) ---
     drawn = img.copy()
     pred_lines_text = []
     H, W = img.shape[:2]
@@ -162,7 +159,6 @@ def process_image(img_path):
         for box in final_boxes_to_draw:
             cv2.rectangle(drawn, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
 
-    # Fallback: Quét toàn ảnh nếu không tìm thấy dòng nào
     if not pred_lines_text:
         t_all, _, boxes_all = get_ocr_data_detailed(img, (0, 0, W, H))
         if t_all and valid_text(t_all):
@@ -184,7 +180,6 @@ def process_image(img_path):
 
     acc = score_cer(gt_text, pred_text)
 
-    # Xuất kết quả
     cv2.imwrite(os.path.join(OUT_DIR, f"{name}_det.jpg"), drawn)
     cv2.imwrite(os.path.join(OUT_DIR, f"{name}_binary.jpg"), mask)
 
@@ -201,4 +196,5 @@ def process_image(img_path):
 if __name__ == "__main__":
     for f in sorted(os.listdir(IMAGE_DIR)):
         if f.lower().endswith((".jpg", ".png", ".jpeg")):
+
             process_image(os.path.join(IMAGE_DIR, f))

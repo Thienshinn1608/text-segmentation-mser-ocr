@@ -101,25 +101,26 @@ def get_ocr_data_detailed(img, box, padding=5):
 
     return text1, conf1, boxes1
 
-def process_image(img_path):
-    name = os.path.splitext(os.path.basename(img_path))[0]
-    gt_text = parse_gt_file(os.path.join(GT_DIR, name + ".txt"))
-
+def process_logic(img_path, gt_path=None):
     img0 = cv2.imread(img_path)
-    if img0 is None: return
+    if img0 is None:
+        return None, None, "Error reading image."
+
+    gt_text = ""
+    if gt_path and os.path.exists(gt_path):
+        gt_text = parse_gt_file_content(gt_path)
 
     img, _ = resize_keep_ratio(img0, MAX_IMG_W)
     gray = preprocess_gray(img)
     mask = build_text_mask(gray)
+
     boxes = detect_boxes(gray, mask)
     lines = group_boxes_by_line(boxes)
 
     drawn = img.copy()
-    
-    clean_binary_vis = np.zeros_like(mask) 
-    
+    clean_binary_vis = np.zeros_like(mask)
+
     pred_lines_text = []
-    
     H, W = img.shape[:2]
 
     for line in lines:
@@ -131,15 +132,15 @@ def process_image(img_path):
 
         sub_texts_parts = []
         sub_boxes_accum = []
-        
+
         for b in line:
             t_sub, c_sub, boxes_sub = get_ocr_data_detailed(img, b)
-            
+
             if t_sub and (len(t_sub) >= 2):
                 sub_texts_parts.append(t_sub)
                 if c_sub >= CONF_MIN_BOX:
                     sub_boxes_accum.extend(boxes_sub)
-        
+
         sub_text_full = " ".join(sub_texts_parts)
 
         final_merged_text = ""
@@ -148,7 +149,7 @@ def process_image(img_path):
         if valid_text(line_text):
             final_merged_text = line_text
             final_boxes_to_draw = line_boxes
-        
+
         if sub_texts_parts:
             if len(sub_text_full) > len(final_merged_text):
                 final_merged_text = sub_text_full
@@ -158,17 +159,17 @@ def process_image(img_path):
             continue
 
         pred_lines_text.append(final_merged_text)
-        
+
         for box in final_boxes_to_draw:
             x1, y1, x2, y2 = box
-            
             cv2.rectangle(drawn, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            
+
             roi_gray = gray[y1:y2, x1:x2]
             if roi_gray.size > 0:
-                _, roi_bin = cv2.threshold(roi_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                _, roi_bin = cv2.threshold(
+                    roi_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+                )
                 clean_binary_vis[y1:y2, x1:x2] = roi_bin
-
 
     if not pred_lines_text:
         t_all, _, boxes_all = get_ocr_data_detailed(img, (0, 0, W, H))
@@ -177,13 +178,16 @@ def process_image(img_path):
             for box in boxes_all:
                 x1, y1, x2, y2 = box
                 cv2.rectangle(drawn, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                
+
                 roi_gray = gray[y1:y2, x1:x2]
                 if roi_gray.size > 0:
-                    _, roi_bin = cv2.threshold(roi_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                    _, roi_bin = cv2.threshold(
+                        roi_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+                    )
                     clean_binary_vis[y1:y2, x1:x2] = roi_bin
 
     pred_lines_text = [post_correct(t) for t in pred_lines_text]
+
     final_text_list = []
     for l in pred_lines_text:
         if all(lev(l, f) > 6 for f in final_text_list):
@@ -193,27 +197,18 @@ def process_image(img_path):
 
     if gt_text:
         refined = refine_by_gt(pred_text, gt_text, max_dist=3)
-        if refined.strip(): pred_text = refined
+        if refined.strip():
+            pred_text = refined
 
     acc = score_cer(gt_text, pred_text)
 
-    cv2.imwrite(os.path.join(OUT_DIR, f"{name}_det.jpg"), drawn)
-    cv2.imwrite(os.path.join(OUT_DIR, f"{name}_binary.jpg"), clean_binary_vis)
+    result_str = f"PRED TEXT:\n{pred_text}\n\n"
+    if gt_text:
+        result_str += f"GROUND TRUTH:\n{gt_text}\n\n"
+        result_str += f"ACCURACY: {acc} %"
+    else:
+        result_str += "ACCURACY: N/A (No GT file provided)"
 
-    print("-" * 60)
-    print(f"[{name}] boxes found by segmentation={len(boxes)}")
-    print(f"TEXT: {pred_text}")
-    print(f"GT  : {gt_text}")
-    print(f"ACC(best): {acc} %")
+    return drawn, clean_binary_vis, result_str
 
-    cv2.imshow("Detected", drawn)
-    cv2.imshow("Clean Binary", clean_binary_vis)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-
-if __name__ == "__main__":
-    for f in sorted(os.listdir(IMAGE_DIR)):
-        if f.lower().endswith((".jpg", ".png", ".jpeg")):
-
-            process_image(os.path.join(IMAGE_DIR, f))
 

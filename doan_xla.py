@@ -13,7 +13,7 @@ from Levenshtein import distance as lev
 reader = easyocr.Reader(["en"], gpu=True)
 
 CONF_MIN_BOX = 0.25
-MAX_IMG_W = 1600
+MAX_IMG_W = 1280
 MIN_W = 30
 MIN_H = 14
 MAX_W_RATIO = 0.60
@@ -454,3 +454,4 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = OCRApp(root)
     root.mainloop()
+

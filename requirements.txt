@@ -1,11 +1,13 @@
 numpy
 opencv-python
+Pillow
 easyocr
 torch
 torchvision
-torchaudio
 python-Levenshtein
-pillow
 scipy
 scikit-image
-tqdm
+pyyaml
+shapely
+pyclipper
+matplotlib

@@ -1,0 +1,11 @@
+numpy
+opencv-python
+easyocr
+torch
+torchvision
+torchaudio
+python-Levenshtein
+pillow
+scipy
+scikit-image
+tqdm

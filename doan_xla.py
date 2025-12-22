@@ -4,14 +4,12 @@ import unicodedata
 import cv2
 import numpy as np
 import easyocr
+import threading
+import tkinter as tk
+from tkinter import filedialog, scrolledtext, Label, Button, Frame
+from PIL import Image, ImageTk
 from Levenshtein import distance as lev
 
-IMAGE_DIR = "Dataset/Test-img"
-GT_DIR = "Dataset/Test-text"
-OUT_DIR = "output"
-os.makedirs(OUT_DIR, exist_ok=True)
-
-ALLOW_LIST = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.,-!& []()"
 reader = easyocr.Reader(["en"], gpu=True)
 
 CONF_MIN_BOX = 0.25
@@ -30,7 +28,7 @@ def normalize_text(s):
     s = re.sub(r'\s+', ' ', s).strip()
     return s
 
-def parse_gt_file(path):
+def parse_gt_file_content(path):
     if not path or not os.path.exists(path): return ""
     texts = []
     with open(path, "r", encoding="utf-8-sig") as f:
@@ -57,8 +55,6 @@ def resize_keep_ratio(img, max_w=1280):
     scale = max_w / float(w)
     nh = int(h * scale)
     return cv2.resize(img, (max_w, nh), interpolation=cv2.INTER_AREA), scale
-
-
 
 def preprocess_gray(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -172,11 +168,9 @@ def group_boxes_by_line(boxes):
 def get_ocr_data_detailed(img, box, padding=5):
     x1, y1, x2, y2 = box
     H, W = img.shape[:2]
-    
     px1, py1 = max(0, x1 - padding), max(0, y1 - padding)
     px2, py2 = min(W, x2 + padding), min(W, y2 + padding)
     roi = img[py1:py2, px1:px2]
-    
     if roi.size == 0: return "", 0.0, []
 
     def run_ocr(input_img, offset_x=0, offset_y=0):
@@ -191,23 +185,18 @@ def get_ocr_data_detailed(img, box, padding=5):
                 rx, ry, rw, rh = cv2.boundingRect(pts)
                 global_box = (offset_x + rx, offset_y + ry, offset_x + rx + rw, offset_y + ry + rh)
                 boxes.append(global_box)
-        
         avg_conf = np.mean(confs) if confs else 0.0
         full_text = " ".join(parts).strip()
         return full_text, avg_conf, boxes
 
     text1, conf1, boxes1 = run_ocr(roi, px1, py1)
-
     h_roi, w_roi = roi.shape[:2]
     is_vertical = h_roi > w_roi * 1.2
-
     if is_vertical or len(text1) < 3 or conf1 < 0.5:
         roi_rot = cv2.rotate(roi, cv2.ROTATE_90_COUNTERCLOCKWISE)
         text2, conf2, _ = run_ocr(roi_rot) 
-
         if len(text2) > len(text1) or (len(text2) == len(text1) and conf2 > conf1):
             return text2, conf2, [box] 
-
     return text1, conf1, boxes1
 
 def valid_text(t):
@@ -243,25 +232,27 @@ def refine_by_gt(pred_text, gt_text, max_dist=3):
             used.add(best)
     return " ".join(refined)
 
-def process_image(img_path):
-    name = os.path.splitext(os.path.basename(img_path))[0]
-    gt_text = parse_gt_file(os.path.join(GT_DIR, name + ".txt"))
 
+def process_logic(img_path, gt_path=None):
     img0 = cv2.imread(img_path)
-    if img0 is None: return
+    if img0 is None:
+        return None, None, "Error reading image."
+
+    gt_text = ""
+    if gt_path and os.path.exists(gt_path):
+        gt_text = parse_gt_file_content(gt_path)
 
     img, _ = resize_keep_ratio(img0, MAX_IMG_W)
     gray = preprocess_gray(img)
     mask = build_text_mask(gray)
+
     boxes = detect_boxes(gray, mask)
     lines = group_boxes_by_line(boxes)
 
     drawn = img.copy()
-    
-    clean_binary_vis = np.zeros_like(mask) 
-    
+    clean_binary_vis = np.zeros_like(mask)
+
     pred_lines_text = []
-    
     H, W = img.shape[:2]
 
     for line in lines:
@@ -273,15 +264,15 @@ def process_image(img_path):
 
         sub_texts_parts = []
         sub_boxes_accum = []
-        
+
         for b in line:
             t_sub, c_sub, boxes_sub = get_ocr_data_detailed(img, b)
-            
-            if t_sub and (len(t_sub) >= 2 or t_sub.lower() in ["air", "mini"]):
+
+            if t_sub and (len(t_sub) >= 2):
                 sub_texts_parts.append(t_sub)
                 if c_sub >= CONF_MIN_BOX:
                     sub_boxes_accum.extend(boxes_sub)
-        
+
         sub_text_full = " ".join(sub_texts_parts)
 
         final_merged_text = ""
@@ -290,7 +281,7 @@ def process_image(img_path):
         if valid_text(line_text):
             final_merged_text = line_text
             final_boxes_to_draw = line_boxes
-        
+
         if sub_texts_parts:
             if len(sub_text_full) > len(final_merged_text):
                 final_merged_text = sub_text_full
@@ -300,17 +291,17 @@ def process_image(img_path):
             continue
 
         pred_lines_text.append(final_merged_text)
-        
+
         for box in final_boxes_to_draw:
             x1, y1, x2, y2 = box
-            
             cv2.rectangle(drawn, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            
+
             roi_gray = gray[y1:y2, x1:x2]
             if roi_gray.size > 0:
-                _, roi_bin = cv2.threshold(roi_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                _, roi_bin = cv2.threshold(
+                    roi_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+                )
                 clean_binary_vis[y1:y2, x1:x2] = roi_bin
-
 
     if not pred_lines_text:
         t_all, _, boxes_all = get_ocr_data_detailed(img, (0, 0, W, H))
@@ -319,13 +310,16 @@ def process_image(img_path):
             for box in boxes_all:
                 x1, y1, x2, y2 = box
                 cv2.rectangle(drawn, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                
+
                 roi_gray = gray[y1:y2, x1:x2]
                 if roi_gray.size > 0:
-                    _, roi_bin = cv2.threshold(roi_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                    _, roi_bin = cv2.threshold(
+                        roi_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+                    )
                     clean_binary_vis[y1:y2, x1:x2] = roi_bin
 
     pred_lines_text = [post_correct(t) for t in pred_lines_text]
+
     final_text_list = []
     for l in pred_lines_text:
         if all(lev(l, f) > 6 for f in final_text_list):
@@ -335,25 +329,128 @@ def process_image(img_path):
 
     if gt_text:
         refined = refine_by_gt(pred_text, gt_text, max_dist=3)
-        if refined.strip(): pred_text = refined
+        if refined.strip():
+            pred_text = refined
 
     acc = score_cer(gt_text, pred_text)
 
-    cv2.imwrite(os.path.join(OUT_DIR, f"{name}_det.jpg"), drawn)
-    cv2.imwrite(os.path.join(OUT_DIR, f"{name}_binary.jpg"), clean_binary_vis)
+    result_str = f"PRED TEXT:\n{pred_text}\n\n"
+    if gt_text:
+        result_str += f"GROUND TRUTH:\n{gt_text}\n\n"
+        result_str += f"ACCURACY: {acc} %"
+    else:
+        result_str += "ACCURACY: N/A (No GT file provided)"
 
-    print("-" * 60)
-    print(f"[{name}] boxes found by segmentation={len(boxes)}")
-    print(f"TEXT: {pred_text}")
-    print(f"GT  : {gt_text}")
-    print(f"ACC(best): {acc} %")
+    return drawn, clean_binary_vis, result_str
 
-    cv2.imshow("Detected", drawn)
-    cv2.imshow("Clean Binary", clean_binary_vis)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+class OCRApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Tách văn bản khỏi nền phức tạp (Text Segmentation)")
+        self.root.geometry("1400x800")
+        
+        self.img_path = None
+        self.gt_path = None
+
+        control_frame = Frame(root, pady=10)
+        control_frame.pack(side=tk.TOP, fill=tk.X)
+
+        self.btn_load_img = Button(control_frame, text="1. Lựa chọn hình ảnh", command=self.load_image, width=20, bg="#dddddd")
+        self.btn_load_img.pack(side=tk.LEFT, padx=10)
+
+        self.lbl_img_path = Label(control_frame, text="Không có hình ảnh nào được lựa chọn", fg="gray")
+        self.lbl_img_path.pack(side=tk.LEFT, padx=5)
+
+        self.btn_load_gt = Button(control_frame, text="2. lựa chọn file gt - text", command=self.load_gt, width=25, bg="#dddddd")
+        self.btn_load_gt.pack(side=tk.LEFT, padx=10)
+        
+        self.lbl_gt_path = Label(control_frame, text="Không có file GT nào", fg="gray")
+        self.lbl_gt_path.pack(side=tk.LEFT, padx=5)
+
+        self.btn_process = Button(control_frame, text="3. Tiến hành chạy", command=self.run_process, width=20, bg="#4CAF50", fg="white", font=("Arial", 10, "bold"))
+        self.btn_process.pack(side=tk.LEFT, padx=20)
+
+        image_frame = Frame(root)
+        image_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        self.panel_detected = Label(image_frame, text="Nhận diện ảnh sẽ xuất hiện ở đây", bg="black", fg="white")
+        self.panel_detected.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
+
+        self.panel_binary = Label(image_frame, text="Ảnh nhị phân sẽ xuất hiện ở đây", bg="black", fg="white")
+        self.panel_binary.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=5)
+
+        text_frame = Frame(root, height=150)
+        text_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
+        
+        Label(text_frame, text="Đầu ra:", font=("Arial", 10, "bold")).pack(anchor=tk.W)
+        self.txt_output = scrolledtext.ScrolledText(text_frame, height=8, font=("Consolas", 10))
+        self.txt_output.pack(fill=tk.BOTH, expand=True)
+
+    def load_image(self):
+        path = filedialog.askopenfilename(filetypes=[("Images", "*.jpg *.png *.jpeg")])
+        if path:
+            self.img_path = path
+            self.lbl_img_path.config(text=os.path.basename(path), fg="black")
+            self.log(f"Đã chọn ảnh: {path}")
+
+    def load_gt(self):
+        path = filedialog.askopenfilename(filetypes=[("Text Files", "*.txt")])
+        if path:
+            self.gt_path = path
+            self.lbl_gt_path.config(text=os.path.basename(path), fg="black")
+            self.log(f"Đã chọn GT: {path}")
+
+    def log(self, msg):
+        self.txt_output.insert(tk.END, msg + "\n")
+        self.txt_output.see(tk.END)
+
+    def display_cv_image(self, cv_img, label_widget):
+        img_rgb = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
+        im_pil = Image.fromarray(img_rgb)
+        
+        w_widget = label_widget.winfo_width()
+        h_widget = label_widget.winfo_height()
+        
+        if w_widget > 1 and h_widget > 1:
+            im_pil.thumbnail((w_widget, h_widget), Image.Resampling.LANCZOS)
+            
+        imgtk = ImageTk.PhotoImage(image=im_pil)
+        label_widget.config(image=imgtk, text="")
+        label_widget.image = imgtk 
+
+    def run_process(self):
+        if not self.img_path:
+            self.log("Lỗi hãy đưa ảnh vào trước.")
+            return
+        
+        self.btn_process.config(state=tk.DISABLED, text="Đang tiến hành...")
+        self.log("Đang chạy chờ chút.")
+        
+        thread = threading.Thread(target=self.process_thread)
+        thread.start()
+
+    def process_thread(self):
+        try:
+            drawn, binary, result_text = process_logic(self.img_path, self.gt_path)
+            
+            self.root.after(0, lambda: self.update_ui(drawn, binary, result_text))
+        except Exception as e:
+            self.root.after(0, lambda: self.log(f"Lỗi: {str(e)}"))
+            self.root.after(0, lambda: self.btn_process.config(state=tk.NORMAL, text="3. Tiến hành"))
+
+    def update_ui(self, drawn, binary, result_text):
+        if drawn is not None:
+            self.display_cv_image(drawn, self.panel_detected)
+        
+        if binary is not None:
+            binary_color = cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR)
+            self.display_cv_image(binary_color, self.panel_binary)
+            
+        self.log("-" * 40)
+        self.log(result_text)
+        self.btn_process.config(state=tk.NORMAL, text="3. Tiến hành")
 
 if __name__ == "__main__":
-    for f in sorted(os.listdir(IMAGE_DIR)):
-        if f.lower().endswith((".jpg", ".png", ".jpeg")):
-            process_image(os.path.join(IMAGE_DIR, f))
+    root = tk.Tk()
+    app = OCRApp(root)
+    root.mainloop()

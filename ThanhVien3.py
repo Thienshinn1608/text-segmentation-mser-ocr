@@ -108,15 +108,18 @@ def process_image(img_path):
     img0 = cv2.imread(img_path)
     if img0 is None: return
 
-    img, _ = tv1.resize_keep_ratio(img0, tv1.MAX_IMG_W)
-    gray = tv1.preprocess_gray(img)
-    mask = tv1.build_text_mask(gray)
-    
-    boxes = tv2.detect_boxes(gray, mask)
-    lines = tv2.group_boxes_by_line(boxes)
+    img, _ = resize_keep_ratio(img0, MAX_IMG_W)
+    gray = preprocess_gray(img)
+    mask = build_text_mask(gray)
+    boxes = detect_boxes(gray, mask)
+    lines = group_boxes_by_line(boxes)
 
     drawn = img.copy()
+    
+    clean_binary_vis = np.zeros_like(mask) 
+    
     pred_lines_text = []
+    
     H, W = img.shape[:2]
 
     for line in lines:
@@ -132,7 +135,7 @@ def process_image(img_path):
         for b in line:
             t_sub, c_sub, boxes_sub = get_ocr_data_detailed(img, b)
             
-            if t_sub and (len(t_sub) >= 2 or t_sub.lower() in ["air", "mini"]):
+            if t_sub and (len(t_sub) >= 2):
                 sub_texts_parts.append(t_sub)
                 if c_sub >= CONF_MIN_BOX:
                     sub_boxes_accum.extend(boxes_sub)
@@ -157,14 +160,28 @@ def process_image(img_path):
         pred_lines_text.append(final_merged_text)
         
         for box in final_boxes_to_draw:
-            cv2.rectangle(drawn, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
+            x1, y1, x2, y2 = box
+            
+            cv2.rectangle(drawn, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            
+            roi_gray = gray[y1:y2, x1:x2]
+            if roi_gray.size > 0:
+                _, roi_bin = cv2.threshold(roi_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                clean_binary_vis[y1:y2, x1:x2] = roi_bin
+
 
     if not pred_lines_text:
         t_all, _, boxes_all = get_ocr_data_detailed(img, (0, 0, W, H))
         if t_all and valid_text(t_all):
             pred_lines_text.append(t_all)
             for box in boxes_all:
-                cv2.rectangle(drawn, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
+                x1, y1, x2, y2 = box
+                cv2.rectangle(drawn, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                
+                roi_gray = gray[y1:y2, x1:x2]
+                if roi_gray.size > 0:
+                    _, roi_bin = cv2.threshold(roi_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                    clean_binary_vis[y1:y2, x1:x2] = roi_bin
 
     pred_lines_text = [post_correct(t) for t in pred_lines_text]
     final_text_list = []
@@ -181,15 +198,16 @@ def process_image(img_path):
     acc = score_cer(gt_text, pred_text)
 
     cv2.imwrite(os.path.join(OUT_DIR, f"{name}_det.jpg"), drawn)
-    cv2.imwrite(os.path.join(OUT_DIR, f"{name}_binary.jpg"), mask)
+    cv2.imwrite(os.path.join(OUT_DIR, f"{name}_binary.jpg"), clean_binary_vis)
 
     print("-" * 60)
-    print(f"[{name}] boxes found={len(boxes)}")
+    print(f"[{name}] boxes found by segmentation={len(boxes)}")
     print(f"TEXT: {pred_text}")
     print(f"GT  : {gt_text}")
     print(f"ACC(best): {acc} %")
 
     cv2.imshow("Detected", drawn)
+    cv2.imshow("Clean Binary", clean_binary_vis)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 
@@ -198,3 +216,4 @@ if __name__ == "__main__":
         if f.lower().endswith((".jpg", ".png", ".jpeg")):
 
             process_image(os.path.join(IMAGE_DIR, f))
+

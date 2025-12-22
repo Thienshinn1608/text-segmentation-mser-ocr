@@ -9,11 +9,6 @@ from Levenshtein import distance as lev
 import thanh_vien_1_tien_xu_ly as tv1
 import thanh_vien_2_phat_hien_vung as tv2
 
-IMAGE_DIR = "Dataset/Test-img"
-GT_DIR = "Dataset/Test-text"
-OUT_DIR = "output"
-os.makedirs(OUT_DIR, exist_ok=True)
-
 reader = easyocr.Reader(["en"], gpu=True)
 CONF_MIN_BOX = 0.25
 
@@ -210,5 +205,6 @@ def process_logic(img_path, gt_path=None):
         result_str += "ACCURACY: N/A (No GT file provided)"
 
     return drawn, clean_binary_vis, result_str
+
 
 

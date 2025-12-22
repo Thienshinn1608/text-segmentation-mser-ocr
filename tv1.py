@@ -12,10 +12,8 @@ def resize_keep_ratio(img, max_w=MAX_IMG_W):
 
 def preprocess_gray(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    # Adaptive Histogram Equalization
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     gray = clahe.apply(gray)
-    # Gaussian Blur để giảm nhiễu tần số cao
     gray = cv2.GaussianBlur(gray, (3, 3), 0)
     return gray
 
@@ -24,7 +22,6 @@ def build_text_mask(gray):
     k1 = cv2.getStructuringElement(cv2.MORPH_RECT, (21, 7))
     k2 = cv2.getStructuringElement(cv2.MORPH_RECT, (31, 9))
     
-    # Làm nổi bật chi tiết tối trên nền sáng và ngược lại
     black = cv2.addWeighted(cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, k1), 0.55, 
                             cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, k2), 0.45, 0)
     top = cv2.addWeighted(cv2.morphologyEx(gray, cv2.MORPH_TOPHAT, k1), 0.55, 
@@ -62,4 +59,5 @@ def parse_gt_file(path):
                 text = ",".join(parts[8:]).strip()
                 if text != "###": texts.append(text)
     return " ".join(texts).strip()
+
 
